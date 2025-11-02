@@ -1,0 +1,206 @@
+CREATE DATABASE medical_rental;
+USE medical_rental;
+
+-- Users table
+CREATE TABLE users (
+    user_id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    phone VARCHAR(15),
+    address TEXT,
+    role ENUM('user', 'admin') DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Categories table
+CREATE TABLE categories (
+    category_id INT PRIMARY KEY AUTO_INCREMENT,
+    category_name VARCHAR(50) NOT NULL
+);
+
+-- Equipment table
+CREATE TABLE equipment (
+    equipment_id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    category_id INT,
+    description TEXT,
+    price_per_day DECIMAL(10,2) NOT NULL,
+    availability_status ENUM('Available', 'Rented', 'Maintenance') DEFAULT 'Available',
+    image_url VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(category_id) ON DELETE SET NULL
+);
+
+-- Rentals table
+CREATE TABLE rentals (
+    rental_id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT,
+    equipment_id INT,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    total_cost DECIMAL(10,2),
+    status ENUM('Pending', 'Active', 'Completed', 'Cancelled') DEFAULT 'Pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id) ON DELETE CASCADE
+);
+
+-- Insert sample categories
+INSERT INTO categories (category_name) VALUES 
+('Wheelchair'),
+('Hospital Bed'),
+('Oxygen Equipment'),
+('Monitoring Devices'),
+('Mobility Aids'),
+('Respiratory Equipment');
+
+-- Insert sample equipment
+INSERT INTO equipment (name, category_id, description, price_per_day, availability_status, image_url) VALUES
+('Standard Wheelchair', 1, 'Comfortable manual wheelchair with adjustable footrests', 50.00, 'Available', 'wheelchair.jpg'),
+('Electric Wheelchair', 1, 'Battery-powered wheelchair with joystick control', 150.00, 'Available', 'electric-wheelchair.jpg'),
+('Hospital Bed - Manual', 2, 'Adjustable hospital bed with side rails', 100.00, 'Available', 'hospital-bed.jpg'),
+('ICU Bed', 2, 'Fully electric ICU bed with multiple positions', 250.00, 'Available', 'icu-bed.jpg'),
+('Oxygen Concentrator', 3, 'Portable oxygen concentrator 5L capacity', 200.00, 'Available', 'oxygen.jpg'),
+('CPAP Machine', 3, 'Sleep apnea therapy device', 120.00, 'Rented', 'cpap.jpg'),
+('Blood Pressure Monitor', 4, 'Digital BP monitor with memory', 30.00, 'Available', 'bp-monitor.jpg'),
+('Pulse Oximeter', 4, 'Fingertip pulse oximeter', 20.00, 'Available', 'oximeter.jpg'),
+('Walking Frame', 5, 'Adjustable walking frame with wheels', 40.00, 'Available', 'walker.jpg'),
+('Crutches', 5, 'Adjustable aluminum crutches (pair)', 25.00, 'Available', 'crutches.jpg');
+-- Insert sample admin user (password: admin123)
+INSERT INTO users (name, email, password, phone, role) VALUES
+('Admin User', 'admin@dev.com', 'admin123', '9876543210', 'admin');
+
+-- Insert sample regular user (password: user123)
+INSERT INTO users (name, email, password, phone, address, role) VALUES
+('Abiram', 'abiram@example.com', 'user123', '9876543211', '123 Main Street, City', 'user');
+
+App.py:
+
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+import mysql.connector
+from datetime import datetime, timedelta
+from functools import wraps
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key_here_change_in_production'
+
+# Database configuration
+db_config = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'Abiram@965',  # Enter your MySQL password here
+    'database': 'medical_rental'
+}
+
+# Database connection function
+def get_db_connection():
+    return mysql.connector.connect(**db_config)
+
+# Login required decorator
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Routes for HTML pages
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/login')
+def login():
+    return render_template('login.html')
+
+@app.route('/register')
+def register():
+    return render_template('register.html')
+
+@app.route('/equipment')
+def equipment():
+    return render_template('equipment.html')
+
+@app.route('/booking')
+@login_required
+def booking():
+    return render_template('booking.html')
+
+@app.route('/profile')
+@login_required
+def profile():
+    return render_template('profile.html')
+
+# API Routes
+
+# User Registration
+@app.route('/api/register', methods=['POST'])
+def api_register():
+    try:
+        data = request.json
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password')
+        phone = data.get('phone')
+        address = data.get('address')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if email already exists
+        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+        if cursor.fetchone():
+            return jsonify({'success': False, 'message': 'Email already registered'}), 400
+        
+        # Insert new user
+        query = "INSERT INTO users (name, email, password, phone, address) VALUES (%s, %s, %s, %s, %s)"
+        cursor.execute(query, (name, email, password, phone, address))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Registration successful'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# User Login
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    try:
+        data = request.json
+        email = data.get('email')
+        password = data.get('password')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("SELECT * FROM users WHERE email = %s AND password = %s", (email, password))
+        user = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if user:
+            session['user_id'] = user['user_id']
+            session['user_name'] = user['name']
+            session['user_role'] = user['role']
+            return jsonify({
+                'success': True, 
+                'message': 'Login successful',
+                'user': {
+                    'id': user['user_id'],
+                    'name': user['name'],
+                    'email': user['email'],
+                    'role': user['role']
+                }
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
